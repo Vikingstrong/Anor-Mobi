@@ -1,0 +1,44 @@
+# Dependencies and package-manager logs
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Expo and generated native projects (Prebuild workflow)
+.expo/
+/android/
+/ios/
+
+# Build outputs and caches
+dist/
+build/
+coverage/
+.gradle/
+*.tsbuildinfo
+*.apk
+*.aab
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+local.properties
+*.jks
+*.keystore
+!debug.keystore
+credentials.json
+
+# Local agent configuration and private attachments
+.agents/
+.codex/
+.aws/
+.codex-attachments/
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
