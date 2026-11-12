@@ -26,7 +26,6 @@ coverage/
 local.properties
 *.jks
 *.keystore
-!debug.keystore
 credentials.json
 
 # Local agent configuration and private attachments

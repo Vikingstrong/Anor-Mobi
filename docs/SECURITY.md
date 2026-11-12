@@ -43,3 +43,19 @@ USSD идёт оператору через мобильную сеть — эт
 ## Проверка перед release
 
 Проверить итоговые permissions/backup rules, отсутствие raw логов и upload, очистку данных, deny/revoke, ошибочный импорт, подписанное обновление и запуск без Metro. Ничто из этого пока не выполнено: приложения ещё нет.
+
+## Проверка зависимостей начального проекта
+
+2026-11-10: npm audit сообщил 5 moderate записей в цепочках Expo CLI/fingerprint → glob/minimatch (0 high/critical). Два корневых advisory: [glob](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4), [minimatch](https://github.com/advisories/GHSA-g3hv-75wg-m249). Это зависимости Node-инструментов сборки, а не реализованный SMS parser. Автоматический `npm audit fix --force` предложил переход на Expo 53 и не применялся: он ломает выбранную совместимость. Предупреждения не скрыты; пересмотреть upstream-исправление перед release.
+
+### Проверка debug APK, 2026-11-11
+
+Подпись APK v2 проверена apksigner. aapt не обнаружил SMS/telephony/camera/audio permissions. Debug manifest Dev Client сохранил SYSTEM_ALERT_WINDOW и служебные сетевые/multicast permissions; удаление overlay через blockedPermissions main manifest не перекрыло debug declaration. Runtime-запроса overlay в нашем коде нет. До release отдельно проверить merged release manifest; текущая development-сборка не является production security approval.
+
+### Новый native module
+
+Manifest нового модуля декларирует CALL_PHONE, READ_PHONE_STATE и RECEIVE_SMS; READ_SMS/SEND_SMS отсутствуют. OS grants выдаёт пользователь, права не подменяются сохранённым флагом. SMS opt-in отдельно; Android/installer может отказать — manual import остаётся. Автоприём только foreground, только AnorINFO/выбранная SIM. Никаких Accessibility/notification-listener/private telephony API.
+
+Структурированный cache пишется атомарно в noBackupFilesDir, без raw текстов. Demo не попадает в cache. На bridge запрет произвольных USSD: только balance→*100#, packages→*104#. Нативный код нового APK ещё требует device проверки; исходное предупреждение о debug overlay остаётся применимым до проверки release manifest.
+
+2026-11-11: background SMS receiver добавлен по прямому поручению владельца. Системный BROADCAST_SMS guard + RECEIVE_SMS runtime opt-in + exact sender AnorINFO + выбранная subscription. Сохраняются только ограниченные известные поля, не текст SMS. Очередь/снимок/история в noBackupFilesDir, до 30 ответов, лимит файлов 128 KiB. Нет фонового USSD, постоянного сервиса, READ_SMS или новых runtime permissions. Частный standalone APK пока использует development signing identity; production signing и публикация не выполнялись.

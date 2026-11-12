@@ -1,0 +1,35 @@
+{
+  "name": "anor-balance",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "dependencies": {
+    "expo": "~58.0.23",
+    "expo-dev-client": "~58.0.18",
+    "expo-status-bar": "~58.0.4",
+    "expo-system-ui": "~58.0.7",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "~5.11.1"
+  },
+  "devDependencies": {
+    "@babel/plugin-transform-modules-commonjs": "^7.29.7",
+    "@babel/preset-typescript": "^7.29.7",
+    "@types/react": "~19.3.0",
+    "babel-jest": "^30.5.2",
+    "jest": "^30.5.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start --dev-client --max-workers 1",
+    "android": "npm run build:android && adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
+    "typecheck": "tsc --noEmit",
+    "check:dependencies": "expo install --check",
+    "build:android": "bash scripts/build-android.sh",
+    "generate:android": "expo prebuild --platform android",
+    "test": "node --max-old-space-size=768 node_modules/jest/bin/jest.js --runInBand"
+  },
+  "private": true,
+  "engines": {
+    "node": "^24.3.0"
+  }
+}

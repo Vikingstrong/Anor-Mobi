@@ -99,3 +99,99 @@ MVP: обычное поле вставки, без фонового чтени�
 5. Только после этого установить зависимости будущего проекта и собрать development APK; затем отдельный release APK со встроенным JS.
 
 SDK и Gradle caches тоже занимают место, даже без IDE; конкретный объём зависит от выбранных версий. EAS Cloud — необязательная альтернатива с отправкой исходников на сборку и отдельными условиями сервиса. Никаких установок в текущем этапе не выполнялось. [Окружение Expo](https://docs.expo.dev/get-started/set-up-your-environment/), [локальные сборки Expo](https://docs.expo.dev/build-reference/local-builds/).
+
+## Реализация: первая итерация, 2026-11-10
+
+Разрешение владельца получено. Создан официальный blank TypeScript проект Expo SDK 58 с React Native 0.88.1, React 19.3.0, TypeScript 6.0.3; Node 24.19.0 и Temurin JDK 17.0.21. Установлены SDK Platform 37.0 и Build Tools 37.0.0. В SDK manager платформа называется `platforms;android-37.0` (вариант без `.0` не найден). Gradle wrapper создан Expo, вручную системный Gradle не устанавливался.
+
+Expo Dev Client добавлен для будущего native-модуля; Safe Area Context — для системных отступов; Expo System UI — для светлой native-темы. Zustand/AsyncStorage/Jest пока не добавлены: нет состояния, хранения или бизнес-логики для тестирования. Выбраны system font и StyleSheet, без анимаций/blur/UI kit.
+
+В shell агента JAVA_HOME/PATH из пользовательского `.bashrc` не подхватываются автоматически: для сборки явно задаются JAVA_HOME и ANDROID_HOME. В обычном пользовательском терминале JDK/adb уже настроены. ADB агентом проверен с доступом вне песочницы: телефон сейчас не подключён; владелец подключит его позже. Нативная установка/запуск и плавность ещё не проверены.
+
+TypeScript (`npm run typecheck`), упаковка JS (`npx expo export --platform android`) и online-проверка зависимостей (`npm run check:dependencies`) прошли. JS bundle создан Hermes, около 1.6 MB; это не размер APK и не измерение памяти/производительности. Исходный manifest содержит allowBackup=false и исключения camera/audio/storage/overlay, без telephony/SMS permissions. Финальный merged manifest проверяется после native build.
+
+Подтверждено конфигурацией первого Gradle build: minSdk 24, compileSdk 37, targetSdk 36, Build Tools 37.0.0, NDK 27.1.12297006, Kotlin plugin 2.2.10, Gradle 9.4.1. Android 12 целевого телефона выше минимального API; это совместимость версий, а не подтверждение USSD или производительности. NDK устанавливается Gradle при первой сборке.
+
+## Прерывание первой сборки и снижение нагрузки
+
+Первая native-сборка прервана аварийным выключением ноутбука по сообщению владельца (RAM заполнена, высокая CPU-нагрузка). APK не создан; запуск на телефоне не выполнен. После reboot процессов Gradle/Kotlin не найдено, MemAvailable ~6.8 GiB из 16 GiB, zram 8 GiB. Точный источник пикового расхода по логам не установлен.
+
+Добавлены `scripts/build-android.sh` и `plugins/withLimitedBuildResources.js`. Повторная сборка автоматически не запускалась. Проверено без компиляции: Expo introspection выдаёт worker=1, parallel=false, daemon=false, Kotlin in-process и heap=1536 MiB. Лёгкий процесс в systemd scope подтвердил реальные cgroup значения memory.high=3221225472, memory.max=4294967296, cpu.max=150000/100000. Это ограничивает всё дерево сборки; исключает прежнее неограниченное потребление CPU/памяти сборкой, но не является успешной проверкой APK. Если 4 GiB недостаточно, сначала оценить ошибку/облачную сборку, не повышать лимит автоматически.
+
+## Повторная сборка, 2026-11-11
+
+Владелец явно разрешил повторную попытку. Запущена через `npm run build:android` с systemd-лимитами; фактический scope подтвердил MemoryMax=4 GiB, MemoryHigh=3 GiB, CPUQuota=150%, на этапе настройки потреблял около 1 GiB. Вчерашние Gradle-плагины переиспользуются из cache.
+
+Исправлены два источника лишней работы: команда `prebuild:android` переименована в `generate:android`, поскольку npm трактовал её как автоматический pre-hook для `build:android`. В wrapper добавлен `--no-clean`: в установленном Expo SDK 58 prebuild по умолчанию пересоздаёт native-каталоги; существующий проект нужно обновлять без удаления build intermediates. Изменения относятся к последующим запускам, текущая компиляция не перезапущена.
+
+### Результат повторной попытки
+
+2026-11-11: `BUILD SUCCESSFUL in 18m 18s`, 483 actionable tasks (451 executed, 32 up-to-date). APK `android/app/build/outputs/apk/debug/app-debug.apk`, 90,498,966 bytes, v0.1.0 / versionCode 1 / package tj.anorbalance.app. aapt подтвердил minSdk 24, targetSdk 36 и имя Anor Balance; внутри две ARM ABI. apksigner verify: подпись v2 корректна. Во время замеров scope использовал ~1–3 GiB RAM; ограничения 3/4 GiB и CPU 150% проверены. После завершения Gradle неактивен, MemAvailable ~6.9 GiB. Предупреждение о JVM Metaspace не привело к ошибке; лимиты не повышались.
+
+В дальнейшем wrapper вызывает `:app:assembleDebug`, а не неквалифицированную `assembleDebug`: вторая также запускала отдельную упаковку AAR библиотек после готовности APK. Новую полную сборку ради изменения селектора задач не запускали.
+
+Проверка финального APK: нет CALL_PHONE/READ_PHONE_STATE/READ_SMS/RECEIVE_SMS/CAMERA/RECORD_AUDIO. При этом debug-manifest Expo Dev Client добавил SYSTEM_ALERT_WINDOW, несмотря на blockedPermissions основного manifest; также присутствуют INTERNET, VIBRATE, сетевые/multicast permissions и собственная non-exported receiver permission. Это debug-инструменты, приложением доступ к overlay не запрашивается. До release необходимо отдельно подтвердить чистый release manifest и убрать ненужные доступы; не считать эту dev-сборку окончательной проверкой минимальных разрешений.
+
+Запуск на устройстве, внешний вид и производительность ещё не проверены. USSD и SMS логика отсутствуют.
+
+### Подтверждения владельца при первом запуске
+
+APK установлен через adb, установка вернула Success; USB reverse 8081 подключил Metro, MainActivity успешно стартовала. Владелец просмотрел приложение и подтвердил появление новой темы после Fast Refresh. Скриншот Dashboard и измерение плавности не являются завершёнными проверками; в системе параллельно открывались другие экраны телефона, поэтому личные снимки не сохраняются в проекте.
+
+Владелец уточнил sender **AnorINFO** и задержку тарифного SMS до нескольких минут, при быстром USSD-балансе. Зафиксированная текущая ситуация «после *100# значения не меняются» ожидаема для dialer fallback: app не получает его текст. Кнопка переименована в «Открыть *100#», чтобы не обещать автоматическое чтение. `Linking.openURL('tel:*100%23')` открывается только по действию пользователя; не запускается CALL_PHONE, не читаются SMS, не меняются timestamps при возврате.
+
+Следующая интеграционная итерация — локальный Kotlin Expo Module с sendUssdRequest и точным parser наблюдавшегося ответа. Она потребует обновлённого APK; новую тяжёлую сборку автоматически не запускать. SMS сначала импортируется вручную; sender allowlist AnorINFO сам по себе не предоставляет Android permission и не подтверждает номер/подписку вставленного текста.
+
+Тема текущего installed APK первоначально native light-only. Для текущего preview runtime Appearance.setColorScheme('auto') снимает override и следует системной теме; app.json теперь automatic для следующей явно разрешённой сборки. Ручной выбор темы использует тот же публичный API. [React Native Appearance](https://reactnative.dev/docs/appearance), [Linking](https://reactnative.dev/docs/linking).
+
+## Реальная интеграция, новая итерация 2026-11-11
+
+Владелец подтвердил *104# для тарифа/пакетов; *100# возвращает только баланс. Native allowlist обновлён. Модуль использует sendUssdRequest на выбранном subscriptionId, CALL_PHONE + READ_PHONE_STATE по действию пользователя. Один pending request, 30-секундный timeout, late callback ignored, завершение Promise exactly once. Тайм-аут не отменяет modem session: автоматический следующий запрос после transport error запрещён.
+
+RECEIVE_SMS запрашивается отдельным переключателем с объяснением широкого системного доступа. Dynamic receiver фильтрует AnorINFO, собирает multipart, передаёт subscriptionId и даты; не запрашивает READ_SMS и не пишет raw body. JS применяет событие только для выбранной SIM при foreground/opt-in, защищается от дублей и более старого timestamp SMS. При отсутствии subId автоматическое применение не выполняется. Если app закрыто/в фоне, SMS надо вставить вручную; нет обещаний фонового приёма.
+
+Хранилище — AtomicFile в noBackupFilesDir через отдельный Expo Module. Снимок содержит только остатки, источник/время, тариф, локальное expiry и выбранную подписку; raw SMS/имя приветствия не сохраняются. При ошибке записи UI сообщает, что текущие значения могут не сохраниться.
+
+До сборки: TypeScript прошёл; 36 Jest tests прошли; autolinking обнаружил оба native class. Это не заменяет Kotlin-компиляцию/проверку carrier callback. Владелец явно поручил собрать APK без дополнительных проверок; build запущен через wrapper, Metro остановлен. CPUQuota повышен пользователем до 800%, RAM cap 4 GiB сохранён. Итог компиляции и работы на устройстве фиксируются отдельно.
+
+### Результат новой сборки
+
+Нативная сборка успешно завершилась: BUILD SUCCESSFUL in 1m 58s, 357 задач (55 выполнено, 302 из cache). Оба Anor native modules включены, Kotlin скомпилирован. Дополнительные проверки после прямой просьбы владельца не запускались. Следующий шаг — обновление на A12, выдача runtime permissions пользователем, выбор SIM 2 и реальная проверка 100/104; успех оператора ещё не подтверждён.
+
+Обновление APK установлено через adb install -r: Success. MainActivity запускается через USB Metro. Разрешения выдаёт пользователь в UI; agent не выдавал grants через adb и не отправлял USSD автоматически. Следующий пользовательский сценарий: выбрать SIM 2, разрешить Phone при проверке баланса, включить opt-in SMS для AnorINFO и выполнить 100/104.
+
+### Подтверждение владельца, 2026-11-11
+
+После установки нового APK и инструкции настройки владелец сообщил: «всё работает идеально», ответы приходят быстро. Это пользовательское подтверждение основного сценария на A12 / Android 12 / Anor SIM 2. Численные времена не измерялись; отдельная матрица отказа permissions, background, смены SIM, killed process и других устройств этим сообщением не закрывается. Ранее наблюдавшаяся задержка SMS до нескольких минут остаётся допустимым сценарием; ожидание/late SMS не удалять и не сокращать по одной быстрой проверке.
+
+### Итерация Anor Mobi 2026-11-11
+
+Добавлен manifest receiver AnorSmsReceiver для доставки AnorINFO при закрытом JS/process. Permission RECEIVE_SMS прежний и запрашивается только переключателем. Receiver защищён BROADCAST_SMS, фильтрует sender/subscription, сохраняет известные поля через goAsync/IO executor; постоянно работающего сервиса нет. При открытии JS забирает очередь, записывает снимок/историю и подтверждает обработанные IDs. UI не вызывает Android API. Foreground динамический receiver остаётся быстрым callback, дубли отбрасываются timestamp. После Android force-stop нужен ручной запуск приложения. Проверить на A12 Android 12: Home/закрытие процесса во время ожидания SMS; затем открыть и сравнить время/остатки/единственную запись истории; другая SIM/отключённый opt-in не меняют данные. Реальный background сценарий пока не подтверждён.
+
+Сборка без Metro: `npm run build:android -- --standalone`, тот же systemd wrapper и RAM cap. APK: android/app/build/outputs/apk/release/app-release.apk. Частная тестовая подпись совместима с установленным debug APK; не считать ключ production signing. Для сборки телефон не требуется.
+
+Источники Android, проверены 2026-11-11: [BroadcastReceiver/goAsync](https://developer.android.com/reference/android/content/BroadcastReceiver.html) — завершение короткой работы через PendingResult.finish, ограниченное время жизни receiver; [stopped packages](https://developer.android.com/reference/android/content/Intent#ACTION_PACKAGE_RESTARTED) — после force stop нужен явный запуск. Metro maxWorkers=1 закреплён в metro.config.js также для встроенного release bundle, не только команды dev server.
+
+Результат 2026-11-11: автономная assembleRelease завершилась BUILD SUCCESSFUL за 8m 1s (609 tasks). TypeScript и 45 Jest tests прошли перед сборкой; Kotlin receiver скомпилирован. Копия частного APK: dist/Anor-Mobi-0.2.0.apk (~36 MiB). Ручная проверка фоновой доставки/темы на A12 не подменяется этими результатами.
+Установка на A12 ([серийный номер скрыт], Android 12): adb install -r вернул Success; MainActivity открыта, am start Status: ok. Reverse tcp:8081 отсутствует — для standalone не нужен. Визуальная проверка/реальное получение фонового SMS остаются за владельцем.
+
+2026-11-11, версия 0.3.0 (расход/прогноз): по прямому разрешению владельца `npm run build:android -- --standalone` завершилась BUILD SUCCESSFUL за 54s, 609 tasks: 36 executed, 573 up-to-date. Native и permissions не менялись. APK: dist/Anor-Mobi-0.3.0.apk. TypeScript и 60 Jest tests прошли до сборки; накопление реальных наблюдений для прогноза проверяется отдельно на устройстве.
+Установка 0.3.0 на A12 Android 12: adb install -r вернул Success, обновление выполнено без удаления данных. Реальный расход/прогноз потребует новых проверок с контекстом пакета; 60 unit tests не заменяют наблюдение в течение суток.
+
+### Автовыбор SIM — 2026-11-12, подготовка 0.3.1
+
+getSubscriptions дополняет список полями carrierName, operatorName (SPN) и isDefaultVoice. Публичные [SubscriptionManager.getDefaultVoiceSubscriptionId](https://developer.android.com/reference/android/telephony/SubscriptionManager#getDefaultVoiceSubscriptionId()) и [TelephonyManager.getSimOperatorName](https://developer.android.com/reference/android/telephony/TelephonyManager#getSimOperatorName()) проверены 2026-11-12. Новых разрешений нет. Expo AsyncFunction читает metadata и возвращает JSON; существующий request callback/main-looper/timeout/lifecycle не менялся. JS application service выбирает subscription, синхронизирует receiver и отправляет allowlisted код только по кнопке. UI не обращается к Android API.
+
+Ручная матрица на A12 Android 12 для нового APK: Anor SIM2/default calls SIM1 → запрос с Anor; Anor отсутствует → default voice; две SIM без default → ручной выбор, без запроса; manual SIM сохраняется после перезапуска; auto на той же SIM сохраняет историю; смена SIM не смешивает счета, позднее SMS старой subscription не применяется. Никаких автоматических USSD для проверки агент не отправляет. Новый native код ещё не собран/не подтверждён на телефоне. TypeScript и 85 Jest tests прошли.
+
+### Сборка 0.3.2 — 2026-11-12
+
+После прямого поручения владельца семь акцентных цветов и шестерёнка добавлены вместе с исправлениями роста МБ/авто SIM. TypeScript и 92 Jest tests прошли. Штатная автономная сборка завершилась BUILD SUCCESSFUL за 1m 15s, 609 tasks: 54 executed, 555 up-to-date. Native изменения метаданных SIM и preferences скомпилированы. APK: dist/Anor-Mobi-0.3.2.apk. Результаты установки/копирования отмечаются отдельно; автоматических USSD для проверки не выполняем.
+Установка 0.3.2 на подключённый Samsung A12 / Android 12: adb install -r вернул Success, MainActivity — Status: ok. Готовый APK также скопирован в /sdcard/Download/Anor-Mobi-0.3.2.apk (36 915 745 bytes); SHA-256 телефона и dist-копии совпал. Проверки реального carrierName/default voice, сохранения выбранного цвета после перезапуска и поведения SMS остаются ручными, USSD агент не отправлял.
+
+### Версия 0.4 — 2026-11-12
+
+Каталог шести основных тарифов проверен по https://anor.mobi/ 2026-11-12 (подробности TARIFFS.md). Native extractor принимает подтверждённые числовые поля частично; неподдерживаемые единицы не превращаются в значения. Snapshot v6 хранит последние данные каждого тарифа, selector не выполняет операторский переход. При реальном новом периоде старые недостающие поля не копируются в активные; архив остаётся.
+
+TypeScript и 114 Jest tests прошли. Разрешённая сборка `npm run build:android -- --standalone` завершилась BUILD SUCCESSFUL за 1m 4s, 609 tasks: 48 executed, 561 up-to-date. Копия APK — dist/Anor-Mobi-0.4.0.apk. Проверить вручную на A12: открытие/закрытие настроек (включая быстрый повтор), Reduce Motion, selector/прокрутку, 15→35→15 с сохранением значений/времени, историю других тарифов и их поля. Mock aliases других планов не подтверждают реальные SMS оператора.
+Доставка 0.4 на Samsung A12 / Android 12: adb install -r — Success; MainActivity — Status: ok. /sdcard/Download/Anor-Mobi-0.4.0.apk скопирован, 36 928 641 байт; SHA-256 совпал с локальным dist-файлом. Визуальная оценка анимаций и новые реальные тарифные SMS остаются ручными; USSD агент не отправлял.

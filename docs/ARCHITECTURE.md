@@ -1,6 +1,6 @@
 # Архитектура
 
-Проект решения, 2026-11-10. Реализации пока нет.
+Целевая архитектура, 2026-11-10. Реализация начата с разрешения владельца: сейчас есть App.tsx, DashboardScreen и theme/tokens. Native-модуль, store, storage и парсеры пока не реализованы. Описанные ниже потоки — план следующих итераций.
 
 ## Границы и стек
 
@@ -71,3 +71,23 @@ Native coordinator держит единственную активную опе
 ## Расширение
 
 Автоматический SMS-источник позже выдаёт такой же validated patch через application service; background lifecycle потребует отдельного решения о native persistence. Не рассчитывать на всегда запущенный JS в BroadcastReceiver. Другие операторы добавляются только после реальной потребности, без предварительного реестра плагинов.
+
+### Реализованный UI preview, 2026-11-11
+
+App владеет preference system/light/dark и подпиской useColorScheme; Dashboard получает палитру и callback. src/components/PackageCard рисует статическую полосу, максимум и независимое время. src/demo/dashboardDemo.ts — явно синтетические данные для opt-in preview, без cache и записи. Dashboard пока открывает только фиксированный tel URI по нажатию; это manual fallback без получения ответа. Настоящий UssdService будет подключён следующей итерацией. Новых native API/permissions для UI не добавлено, APK повторно не собирался.
+
+### Native-интеграция, 2026-11-11
+
+modules/anor-telephony содержит AnorTelephonyModule и независимый AnorSnapshotStorageModule. TelephonyPort валидирует unknown payload, управляет runtime permissions и передаёт события только AnorINFO. AccountController не зависит от React/Android: последовательность 100/104, busy, контекст SIM, ожидание, поздний SMS, partial patch и сохранение проверяются подменными портами. useAccount связывает controller с useSyncExternalStore и AppState. PackageCard получает реальные readings и отдельные timestamps, demo остаётся отдельным источником представления и никогда не записывается в cache.
+
+Native receiver зарегистрирован динамически только в foreground после opt-in. Исходный SMS проходит в памяти в TS parser и не сохраняется. При фоне/убийстве процесса гарантии получения нет; manual import остаётся доступным. Snapshot adapter сериализует записи и валидирует schemaVersion, native AtomicFile записывает JSON в noBackupFilesDir. Runtime-зависимости AsyncStorage/Zustand не добавлялись.
+
+2026-11-11: фоновая граница: системный SMS broadcast → AnorSmsReceiver (extract known fields) → AtomicFile inbox → backgroundSms adapter (runtime validation + существующий parser) → AccountController → snapshot/history → UI. Очередь подтверждается после durable write; native не запускает JS/service и USSD. Foreground callback остаётся отдельным быстрым каналом. Theme adapter использует отдельную preference; UI получает только тему/ошибку. История — часть v2 structured snapshot.
+
+2026-11-11, расход/прогноз: domain/internetUsage зависит только от domain/account. Получает явный now для воспроизводимых расчётов; не использует React/native/storage. InternetUsageCard получает Account из application state, отображает результат; существующий foreground clock обновляет время. Контекст пакета сохраняется application service при приёме ответа. Native и permissions не менялись, новых зависимостей нет.
+
+2026-11-12: native getSubscriptions поставляет carrierName/SPN/default-voice metadata; telephony adapter валидирует unknown, domain/simSelection решает выбор, AccountController применяет режим и эффективную subscription. Список/default не persist, режим auto/manual входит в snapshot v4. Контекст счёта переключается до query и sync SMS receiver, а при том же ID история сохраняется. UI показывает режим и слот после определения. В internetUsage убран рост как reset: running minimum отделён от фактического последнего остатка, хранение readings прежнее.
+
+2026-11-12, 0.3.2: App выбирает resolved system/light/dark и accent; pure getPalette подставляет соответствующие accent/tint/track поверх нейтральной базы. Dashboard получает палитру и callback выбора; native storage доступен только через themeStorage adapter. Акцент — отдельная preference, не поле счёта; новых зависимостей/таймеров нет. Шестерёнка — code-native glyph assets/icons/settings.png, воспроизводимая scripts/generate-brand-assets.py.
+
+2026-11-12, 0.4: domain/tariffs — проверенный каталог и exact name matcher; domain/tariffView — pure выбор активных/архивных readings и применимых полей. Application сохраняет отдельный снимок по фактическому названию тарифа, независимо от manual UI override. UI selector не исполняет активацию. SettingsSheet изолирует native-driven lifecycle открытия/закрытия. Хранилище мигрирует v1–v5 в v6, native contract JSON/permissions без расширения.
